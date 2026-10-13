@@ -69,6 +69,109 @@ function showEmpty() {
   jumpBtn.hidden = true;
 }
 
+// ---------- Markdown (so replies show real bold, lists and tables) ----------
+const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+function inline(s) {
+  s = esc(s);
+  const codes = [];
+  s = s.replace(/`([^`\n]+)`/g, (_, c) => { codes.push(c); return "\u0000" + (codes.length - 1) + "\u0000"; });
+  s = s.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  s = s.replace(/\*\*([^*\n]+?)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/(^|[^*\w])\*([^*\s][^*\n]*?)\*(?!\*)/g, "$1<em>$2</em>");
+  s = s.replace(/(^|[^\w])_([^_\s][^_\n]*?)_(?!\w)/g, "$1<em>$2</em>");
+  s = s.replace(/~~([^~\n]+)~~/g, "<del>$1</del>");
+  return s.replace(/\u0000(\d+)\u0000/g, (_, i) => "<code>" + codes[i] + "</code>");
+}
+
+const isSep = (l) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l) && l.includes("-");
+const splitRow = (l) => l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+const LIST_RE = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
+const isBlockStart = (l, next) =>
+  /^\s*```/.test(l) || /^#{1,6}\s/.test(l) || LIST_RE.test(l) || /^\s*>/.test(l) ||
+  /^\s*([-*_])(\s*\1){2,}\s*$/.test(l) || (l.includes("|") && next !== undefined && isSep(next));
+
+function renderList(items) {
+  let html = "";
+  const stack = [];
+  for (const it of items) {
+    while (stack.length && it.indent < stack[stack.length - 1].indent) html += "</li></" + stack.pop().type + ">";
+    const top = stack[stack.length - 1];
+    if (!top || it.indent > top.indent) { html += "<" + it.type + "><li>"; stack.push({ indent: it.indent, type: it.type }); }
+    else html += "</li><li>";
+    html += inline(it.text);
+  }
+  while (stack.length) html += "</li></" + stack.pop().type + ">";
+  return html;
+}
+
+function renderMarkdown(src) {
+  const lines = src.replace(/\r\n?/g, "\n").split("\n");
+  const out = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    if (/^\s*```/.test(line)) {
+      const buf = [];
+      i++;
+      while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) buf.push(lines[i++]);
+      i++;
+      out.push("<pre><code>" + esc(buf.join("\n")) + "</code></pre>");
+      continue;
+    }
+    if (!line.trim()) { i++; continue; }
+
+    let m = line.match(/^(#{1,6})\s+(.*)$/);
+    if (m) {
+      const lvl = Math.min(m[1].length + 2, 5);
+      out.push("<h" + lvl + ">" + inline(m[2]) + "</h" + lvl + ">");
+      i++;
+      continue;
+    }
+
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { out.push("<hr>"); i++; continue; }
+
+    if (line.includes("|") && i + 1 < lines.length && isSep(lines[i + 1])) {
+      const head = splitRow(line);
+      const align = splitRow(lines[i + 1]).map((c) => (/^:-+:$/.test(c) ? "center" : /-+:$/.test(c) ? "right" : ""));
+      i += 2;
+      const rows = [];
+      while (i < lines.length && lines[i].includes("|") && lines[i].trim()) rows.push(splitRow(lines[i++]));
+      const cell = (tag, c, k) => "<" + tag + (align[k] ? ' style="text-align:' + align[k] + '"' : "") + ">" + inline(c) + "</" + tag + ">";
+      out.push(
+        '<div class="tbl"><table><thead><tr>' + head.map((c, k) => cell("th", c, k)).join("") + "</tr></thead><tbody>" +
+        rows.map((r) => "<tr>" + head.map((_, k) => cell("td", r[k] || "", k)).join("") + "</tr>").join("") +
+        "</tbody></table></div>"
+      );
+      continue;
+    }
+
+    if (/^\s*>/.test(line)) {
+      const buf = [];
+      while (i < lines.length && /^\s*>/.test(lines[i])) buf.push(lines[i++].replace(/^\s*>\s?/, ""));
+      out.push("<blockquote>" + renderMarkdown(buf.join("\n")) + "</blockquote>");
+      continue;
+    }
+
+    if (LIST_RE.test(line)) {
+      const items = [];
+      while (i < lines.length && LIST_RE.test(lines[i])) {
+        const [, sp, mark, text] = lines[i++].match(LIST_RE);
+        items.push({ indent: sp.replace(/\t/g, "  ").length, type: /\d/.test(mark) ? "ol" : "ul", text });
+      }
+      out.push(renderList(items));
+      continue;
+    }
+
+    const para = [];
+    while (i < lines.length && lines[i].trim() && !(para.length && isBlockStart(lines[i], lines[i + 1]))) para.push(lines[i++]);
+    out.push("<p>" + para.map(inline).join("<br>") + "</p>");
+  }
+  return out.join("");
+}
+
 // ---------- Messages ----------
 function addMessage(role, text = "") {
   const empty = $("empty");
@@ -148,7 +251,7 @@ const DOTS = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12"
 function addActions(bot, prompt, failed) {
   const row = document.createElement("div");
   row.className = "actions";
-  const text = bot.textContent.trim();
+  const text = (bot.dataset.raw || bot.textContent).trim();
 
   const retry = () => {
     if (busy) return;
@@ -195,6 +298,16 @@ async function respondTo(prompt) {
 
   let started = false;
   let failed = false;
+  let raw = "";
+  let raf = 0;
+
+  const paint = () => {
+    raf = 0;
+    const stick = nearBottom();
+    bot.innerHTML = renderMarkdown(raw);
+    bot.dataset.raw = raw;
+    if (stick) scrollDown();
+  };
 
   try {
     const res = await fetch("/chat/ai/stream?input=" + encodeURIComponent(prompt), {
@@ -230,10 +343,9 @@ async function respondTo(prompt) {
 
         if (data.error) throw new Error(data.error);
         if (data.token) {
-          const stick = nearBottom();
-          if (!started) { bot.textContent = ""; started = true; }
-          bot.textContent += data.token;
-          if (stick) scrollDown();
+          if (!started) { bot.textContent = ""; bot.classList.add("md"); started = true; }
+          raw += data.token;
+          if (!raf) raf = requestAnimationFrame(paint);
         }
       }
     }
@@ -252,6 +364,8 @@ async function respondTo(prompt) {
       bot.textContent = err.message || "Something went wrong. Try again.";
     }
   } finally {
+    if (raf) { cancelAnimationFrame(raf); raf = 0; }
+    if (started && !failed) paint();
     controller = null;
     setBusy(false);
   }
