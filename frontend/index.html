@@ -1,27 +1,35 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+  <meta name="viewport"
+    content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
   <meta name="theme-color" content="#e2e3e2" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="AI Studio" />
   <link rel="manifest" href="/assets/manifest.json" />
-  <link rel="apple-touch-icon" href="/assets/icon-180.png" />
-  <link rel="icon" type="image/png" href="/assets/icon-192.png" />
   <title>Agentic AI Studio</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600&family=Instrument+Serif&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600&family=Instrument+Serif&display=swap"
+    rel="stylesheet" />
   <link rel="stylesheet" href="/assets/styles.css" />
+  <link rel="icon" href="/assets/favicon.ico" sizes="any" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/icon-32.png" />
+  <link rel="apple-touch-icon" href="/assets/icon-180.png" />
   <script src="/assets/app.js"></script>
 </head>
+
 <body>
   <div class="page">
     <header class="nav">
-      <a class="brand" href="/" aria-label="Agentic AI Studio"><span class="mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7" /></svg></span><span class="brand-text">Agentic AI Studio</span></a>
+      <a class="brand" href="/" aria-label="Agentic AI Studio"><span class="mark" aria-hidden="true"><svg
+            viewBox="0 0 24 24">
+            <path d="M12 19V5M5 12l7-7 7 7" />
+          </svg></span><span class="brand-text">Agentic AI Studio</span></a>
       <div class="nav-actions">
         <button class="pill small" data-theme-toggle type="button"></button>
         <a class="link" id="nav-login" href="/login">Log in</a>
@@ -33,12 +41,16 @@
     <main>
       <section class="hero">
         <h1>An AI assistant you can just ask.</h1>
-        <p>Type a question and read the answer as it is written. You keep your own account, so your chats stay yours.</p>
+        <p>Type a question and read the answer as it is written. You keep your own account, so your chats stay yours.
+        </p>
 
         <form class="ask" id="ask">
-          <input type="text" id="q" placeholder="Ask the assistant anything" aria-label="Your question" autocomplete="off" />
+          <input type="text" id="q" placeholder="Ask the assistant anything" aria-label="Your question"
+            autocomplete="off" />
           <button class="orb solid" type="submit" aria-label="Ask">
-            <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
+            <svg viewBox="0 0 24 24">
+              <path d="M12 19V5M5 12l7-7 7 7" />
+            </svg>
           </button>
         </form>
         <p class="hint" id="hint">You will be asked to log in first.</p>
@@ -68,8 +80,10 @@
       <section class="section about">
         <h2>About this site</h2>
         <div>
-          <p>Agentic AI Studio is a small chat app built around a single assistant. There is one place to talk to it and nothing else to learn.</p>
-          <p>It is still being built, so features will change. Your messages are saved to your account when you send them.</p>
+          <p>Agentic AI Studio is a small chat app built around a single assistant. There is one place to talk to it and
+            nothing else to learn.</p>
+          <p>It is still being built, so features will change. Your messages are saved to your account when you send
+            them.</p>
         </div>
       </section>
     </main>
@@ -82,4 +96,5 @@
 
   <script src="/assets/home.js"></script>
 </body>
+
 </html>
