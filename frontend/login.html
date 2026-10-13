@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+  <meta name="theme-color" content="#e2e3e2" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="AI Studio" />
+  <link rel="manifest" href="/assets/manifest.json" />
+  <link rel="apple-touch-icon" href="/assets/icon-180.png" />
+  <link rel="icon" type="image/png" href="/assets/icon-192.png" />
+  <title>Welcome back · Agentic AI Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600&family=Instrument+Serif&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/styles.css" />
+  <script src="/assets/app.js"></script>
+</head>
+<body data-mode="login">
+  <button class="pill small theme-btn" data-theme-toggle type="button"></button>
+
+  <main class="auth">
+    <section class="glass card">
+      <a class="back" href="/">&larr; Agentic AI Studio</a>
+      <h1>Welcome back</h1>
+      <p class="sub">Log in to continue to your assistant.</p>
+
+      <form id="form" novalidate>
+        <label>Username
+          <span class="field"><input type="text" id="username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="next" placeholder="your_name" required /></span>
+        </label>
+        <label>Password
+          <span class="field">
+            <input type="password" id="password" autocomplete="current-password" enterkeyhint="go" placeholder="At least 8 characters" required />
+            <button class="eye" id="eye" type="button" aria-label="Show password" aria-pressed="false">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/><path class="slash" d="M4 4l16 16"/></svg>
+            </button>
+          </span>
+        </label>
+        <p class="error" id="error" role="alert"></p>
+        <button class="pill solid" id="submit" type="submit">Log in</button>
+      </form>
+
+      <p class="alt">No account yet? <a href="/signup">Sign up</a></p>
+    </section>
+  </main>
+
+  <script src="/assets/auth.js"></script>
+</body>
+</html>
