@@ -19,6 +19,9 @@ dependencies = [
     "langchain-openai>=0.2.0",
 ]
 
+[tool.setuptools]
+packages = ["api", "backend", "backend.app", "backend.app.ai", "backend.app.ai.agent", "backend.app.ai.prompt", "backend.app.ai.rag", "backend.app.api", "backend.app.api.routes", "backend.app.core", "backend.app.db", "backend.app.schemas"]
+
 [tool.vercel]
 entrypoint = "backend.app.main:app"
 
