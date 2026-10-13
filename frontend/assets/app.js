@@ -1,7 +1,7 @@
 // ---------- Config: change these to match your backend ----------
 const CONFIG = {
   loginUrl: "/auth/login",
-  signupUrl: "/auth/signup",
+  signupUrl: "/auth/register",
   // "form" = OAuth2PasswordRequestForm (username + password as form data)
   // "json" = JSON body { username, password }
   loginFormat: "form",
@@ -130,10 +130,10 @@ async function login(username, password) {
   session.save(token, username);
 }
 
-async function signup(username, password) {
+async function signup(username, password, email) {
   await request(CONFIG.signupUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ username, password, email }),
   });
 }

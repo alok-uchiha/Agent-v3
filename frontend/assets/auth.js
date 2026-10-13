@@ -29,9 +29,14 @@ $("form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const username = $("username").value.trim();
   const password = $("password").value;
+  const email = $("email") ? $("email").value.trim() : "";
 
   if (!username || !password) {
     $("error").textContent = "Enter a username and password.";
+    return;
+  }
+  if (mode === "signup" && !email) {
+    $("error").textContent = "Enter your email.";
     return;
   }
 
@@ -41,7 +46,7 @@ $("form").addEventListener("submit", async (e) => {
   $("error").textContent = "";
 
   try {
-    if (mode === "signup") await signup(username, password);
+    if (mode === "signup") await signup(username, password, email);
     await login(username, password);
     location.href = "/chat";
   } catch (err) {

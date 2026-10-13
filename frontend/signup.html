@@ -1,8 +1,10 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+  <meta name="viewport"
+    content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
   <meta name="theme-color" content="#e2e3e2" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -14,10 +16,12 @@
   <title>Create account · Agentic AI Studio</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600&family=Instrument+Serif&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600&family=Instrument+Serif&display=swap"
+    rel="stylesheet" />
   <link rel="stylesheet" href="/assets/styles.css" />
   <script src="/assets/app.js"></script>
 </head>
+
 <body data-mode="signup">
   <button class="pill small theme-btn" data-theme-toggle type="button"></button>
 
@@ -29,13 +33,25 @@
 
       <form id="form" novalidate>
         <label>Username
-          <span class="field"><input type="text" id="username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="next" placeholder="your_name" required /></span>
+          <span class="field"><input type="text" id="username" autocomplete="username" autocapitalize="none"
+              autocorrect="off" spellcheck="false" enterkeyhint="next" placeholder="your_name" required /></span>
+        </label>
+        <label>Email
+          <span class="field">
+            <input type="email" id="email" autocomplete="email" autocapitalize="none" autocorrect="off"
+              spellcheck="false" enterkeyhint="next" placeholder="you@example.com" required />
+          </span>
         </label>
         <label>Password
           <span class="field">
-            <input type="password" id="password" autocomplete="new-password" enterkeyhint="go" placeholder="At least 8 characters" required />
+            <input type="password" id="password" autocomplete="new-password" enterkeyhint="go"
+              placeholder="At least 8 characters" required />
             <button class="eye" id="eye" type="button" aria-label="Show password" aria-pressed="false">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/><path class="slash" d="M4 4l16 16"/></svg>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" />
+                <circle cx="12" cy="12" r="3" />
+                <path class="slash" d="M4 4l16 16" />
+              </svg>
             </button>
           </span>
         </label>
@@ -49,4 +65,5 @@
 
   <script src="/assets/auth.js"></script>
 </body>
+
 </html>
