@@ -12,7 +12,7 @@ from langchain.messages import HumanMessage
 from backend.app.core.dependency import get_db, get_user
 from backend.app.db.models import Conversation, Message, User
 from backend.app.schemas.message import MessageCreate
-from backend.app.ai.agent.agent import model
+from backend.app.ai.agent.agent import agent
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -21,8 +21,17 @@ def _text(content) -> str:
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        return "".join(p if isinstance(p, str) else p.get("text", "") for p in content)
+        return "".join(
+            p if isinstance(p, str) else p.get("text", "") for p in content
+        )
+    if isinstance(content, dict):
+        return content.get("text", "")
     return ""
+
+
+def _should_emit_stream_chunk(meta: dict | None) -> bool:
+    node = (meta or {}).get("langgraph_node")
+    return node in {"agent", "model"} or node is None
 
 
 # ---------- Existing routes ----------
@@ -92,23 +101,25 @@ async def get_convo(
         ],
     }
 
+
 @router.post("/ai/stream")
 async def ai_stream(
     input: str,
-    current_user:Annotated[User, Depends(get_user)]
+    current_user: Annotated[User, Depends(get_user)],
 ):
 
     config = {"configurable": {"thread_id": f"user-{current_user.id}"}}
-    
+
     async def event_gen():
         try:
-            async for chunk, meta in model.astream(
+            async for chunk, meta in agent.astream(
                 {"messages": [HumanMessage(input)]},
                 config=config,
                 stream_mode="messages",
             ):
-                # only the main model's text, not tool results or the summarizer
-                if meta.get("langgraph_node") != "model":
+                # LangGraph versions vary between "agent" and "model" for the response node.
+                # Skip tool/summarizer chunks while still forwarding the model output.
+                if not _should_emit_stream_chunk(meta):
                     continue
                 token = _text(chunk.content)
                 if token:
