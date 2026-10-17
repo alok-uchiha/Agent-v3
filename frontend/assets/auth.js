@@ -5,6 +5,16 @@ const $ = (id) => document.getElementById(id);
 const mode = document.body.dataset.mode;
 const label = mode === "signup" ? "Create account" : "Log in";
 
+// Message left by another page, e.g. "Your session expired"
+const note = flash.take();
+if (note) {
+  const n = document.createElement("p");
+  n.className = "notice";
+  n.setAttribute("role", "status");
+  n.textContent = note + (sessionStorage.getItem("pending") ? " Your message will be sent once you are in." : "");
+  $("form").before(n);
+}
+
 // Show / hide password
 const eye = $("eye");
 if (eye) {
@@ -50,7 +60,17 @@ $("form").addEventListener("submit", async (e) => {
     await login(username, password);
     location.href = "/chat";
   } catch (err) {
-    $("error").textContent = err.message;
+    const box = $("error");
+    box.textContent = err.message;
+    // Point people to the right page if they used the wrong one
+    const hint = (text, href, linkText) => {
+      const a = document.createElement("a");
+      a.href = href;
+      a.textContent = linkText;
+      box.append(" " + text + " ", a);
+    };
+    if (mode === "login" && [400, 401, 404].includes(err.status)) hint("New here?", "/signup", "Create an account");
+    if (mode === "signup" && [400, 409].includes(err.status)) hint("Already have one?", "/login", "Log in");
     btn.disabled = false;
     btn.textContent = label;
     buzz([30, 40, 30]);

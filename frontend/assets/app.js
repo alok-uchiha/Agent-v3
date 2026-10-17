@@ -8,8 +8,22 @@ const CONFIG = {
 };
 
 // ---------- Session ----------
+const EXPIRED_MSG = "Your session expired. Please log in again.";
+
+// Login tokens are JWTs, so we can read their expiry without asking the server
+function tokenExpired(t) {
+  try {
+    const part = t.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    const exp = JSON.parse(atob(part)).exp;
+    return typeof exp === "number" && exp * 1000 <= Date.now() + 5000;
+  } catch (_) {
+    return false; // not a JWT, let the server decide
+  }
+}
+
 const session = {
   get token() { return localStorage.getItem("token"); },
+  get expired() { const t = this.token; return !!t && tokenExpired(t); },
   get username() { return localStorage.getItem("username") || ""; },
   save(token, username) {
     localStorage.setItem("token", token);
@@ -21,9 +35,33 @@ const session = {
   },
 };
 
+// One-time message shown on the next page (e.g. "session expired")
+const flash = {
+  set(msg) { try { sessionStorage.setItem("flash", msg); } catch (_) {} },
+  peek() { try { return sessionStorage.getItem("flash") || ""; } catch (_) { return ""; } },
+  take() { const m = this.peek(); try { sessionStorage.removeItem("flash"); } catch (_) {} return m; },
+};
+
+// A stale token would bounce people between pages, so drop it as soon as any page loads
+if (session.expired) {
+  session.clear();
+  flash.set(EXPIRED_MSG);
+}
+
 function logout() {
+  try { localStorage.removeItem("chat:" + session.username); } catch (_) {}
   session.clear();
   location.href = "/";
+}
+
+// Pages can set this to save something (like an unsent message) before we leave
+let onExpire = null;
+
+function expireSession() {
+  try { if (onExpire) onExpire(); } catch (_) {}
+  session.clear();
+  flash.set(EXPIRED_MSG);
+  location.replace("/login");
 }
 
 // ---------- Theme ----------
@@ -110,8 +148,10 @@ async function request(url, options = {}) {
   try { data = await res.json(); } catch (_) {}
 
   if (!res.ok) {
-    if (res.status === 401 && session.token) logout();
-    throw new Error(errorText(data, "Something went wrong. Try again."));
+    if (res.status === 401 && session.token) expireSession();
+    const err = new Error(errorText(data, "Something went wrong. Try again."));
+    err.status = res.status;
+    throw err;
   }
   return data;
 }

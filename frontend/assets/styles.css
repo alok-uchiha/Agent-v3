@@ -494,3 +494,10 @@ input, textarea { font-size: 16px; }
 .md td { min-width: 110px; }
 .md th { font-weight: 600; color: var(--ink); white-space: nowrap; }
 .md tr:last-child td { border-bottom: 0; }
+
+/* ---------- Session notice, stream state, scrolling ---------- */
+.notice { margin: 0 0 18px; padding: 12px 16px; border-radius: 14px; font-size: 14px; line-height: 1.5; color: var(--ink); background: var(--panel); border: 1px solid var(--edge); }
+.error a { color: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+.thinking { margin-left: 10px; font-size: 14px; color: var(--faint); vertical-align: middle; }
+.stream-note { margin: 8px 0 0; font-size: 13px; color: var(--faint); }
+.messages { overflow-anchor: none; }

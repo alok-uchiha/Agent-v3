@@ -1,4 +1,4 @@
-if (!session.token) location.replace("/");
+if (!session.token) location.replace("/login");
 
 const $ = (id) => document.getElementById(id);
 const messagesEl = $("messages");
@@ -10,25 +10,67 @@ const touch = window.matchMedia("(pointer: coarse)").matches;
 
 let busy = false;
 let controller = null;
+let lastPrompt = null;
+
+// If the session ends mid-request, the question is sent again after logging in
+
+// The conversation is kept on this device, so it is still there after an
+// expired session and a fresh login. Log out or New chat clears it.
+const HIST_KEY = "chat:" + session.username;
+let history = [];
+try { history = JSON.parse(localStorage.getItem(HIST_KEY) || "[]"); } catch (_) {}
+if (!Array.isArray(history)) history = [];
+
+function saveHistory() {
+  try {
+    if (history.length) localStorage.setItem(HIST_KEY, JSON.stringify(history.slice(-60)));
+    else localStorage.removeItem(HIST_KEY);
+  } catch (_) {}
+}
+
+onExpire = () => {
+  if (!lastPrompt) return;
+  sessionStorage.setItem("pending", lastPrompt);
+  // that question never got an answer; it is sent again after login
+  const last = history[history.length - 1];
+  if (last && last.role === "user" && last.text === lastPrompt) { history.pop(); saveHistory(); }
+};
 
 $("who").textContent = session.username;
 $("logout").onclick = logout;
 $("new-chat").onclick = () => {
   if (busy) return;
+  history = [];
+  saveHistory();
   showEmpty();
   if (!touch) input.focus();
 };
 
 // ---------- Scrolling ----------
+// The page only auto-follows a streaming reply while you are at the bottom.
+// Scroll up even a little and it stays put until you come back down
+// (or tap "Latest").
+let follow = true;
+let lastTop = 0;
+
 const dist = () => messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight;
-const nearBottom = (t = 80) => dist() < t;
+const atBottom = () => dist() < 24;
 const scrollDown = () => { messagesEl.scrollTop = messagesEl.scrollHeight; };
+const updateJump = () => { jumpBtn.hidden = atBottom() || !messagesEl.querySelector(".msg"); };
 
 messagesEl.addEventListener("scroll", () => {
+  const top = messagesEl.scrollTop;
+  if (atBottom()) follow = true;           // back at the bottom: follow again
+  else if (top < lastTop - 1) follow = false; // moved up: stop following
+  lastTop = top;
   closeMenu();
-  jumpBtn.hidden = nearBottom(160) || !messagesEl.querySelector(".msg");
+  updateJump();
 }, { passive: true });
-jumpBtn.onclick = () => messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: "smooth" });
+
+jumpBtn.onclick = () => {
+  follow = true;
+  messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: "smooth" });
+};
 
 // ---------- Keep the layout above the on-screen keyboard ----------
 if (window.visualViewport) {
@@ -37,7 +79,7 @@ if (window.visualViewport) {
     const root = document.documentElement.style;
     root.setProperty("--vvh", vv.height + "px");
     root.setProperty("--vvt", vv.offsetTop + "px");
-    if (document.activeElement === input && nearBottom(200)) scrollDown();
+    if (document.activeElement === input && follow) scrollDown();
   };
   vv.addEventListener("resize", fit);
   vv.addEventListener("scroll", fit);
@@ -185,8 +227,9 @@ function addMessage(role, text = "") {
   return el;
 }
 
-function showDots(el) {
-  el.innerHTML = '<span class="dots" aria-label="Assistant is typing"><i></i><i></i><i></i></span>';
+function showDots(el, slow = false) {
+  el.innerHTML = '<span class="dots" aria-label="Assistant is typing"><i></i><i></i><i></i></span>' +
+    (slow ? '<span class="thinking">Still thinking...</span>' : "");
 }
 
 async function copyText(t) {
@@ -255,6 +298,8 @@ function addActions(bot, prompt, failed) {
 
   const retry = () => {
     if (busy) return;
+    const last = history[history.length - 1];
+    if (last && last.role === "assistant") { history.pop(); saveHistory(); }
     bot.remove();
     row.remove();
     respondTo(prompt);
@@ -279,7 +324,7 @@ function addActions(bot, prompt, failed) {
   }
 
   bot.after(row);
-  if (nearBottom(160)) scrollDown();
+  if (follow) scrollDown();
 }
 
 // ---------- Talking to the assistant ----------
@@ -292,21 +337,55 @@ function setBusy(b) {
 
 async function respondTo(prompt) {
   setBusy(true);
+  follow = true;
   const bot = addMessage("assistant");
   showDots(bot);
   controller = new AbortController();
 
   let started = false;
   let failed = false;
+  let interrupted = false;
   let raw = "";
   let raf = 0;
+  const t0 = performance.now();
+  const ms = () => Math.round(performance.now() - t0) + "ms";
+
+  // If the session runs out, keep the question so it is sent after logging in again
+  lastPrompt = prompt;
+  const slowTimer = setTimeout(() => { if (!started) showDots(bot, true); }, 2500);
 
   const paint = () => {
     raf = 0;
-    const stick = nearBottom();
     bot.innerHTML = renderMarkdown(raw);
     bot.dataset.raw = raw;
-    if (stick) scrollDown();
+    if (follow) scrollDown(); else updateJump();
+  };
+
+  // One server-sent event can hold several "data:" lines
+  const handleEvent = (ev) => {
+    const payload = ev.split(/\r?\n/)
+      .filter((l) => l.startsWith("data:"))
+      .map((l) => l.slice(5).replace(/^ /, ""))
+      .join("\n")
+      .trim();
+    if (!payload) return false;
+    if (payload === "[DONE]") return true;
+
+    let data;
+    try { data = JSON.parse(payload); } catch (_) { return false; }
+
+    if (data.error) throw new Error(data.error);
+    if (data.token) {
+      if (!started) {
+        started = true;
+        bot.textContent = "";
+        bot.classList.add("md");
+        console.debug("[chat] first token after", ms());
+      }
+      raw += data.token;
+      if (!raf) raf = requestAnimationFrame(paint);
+    }
+    return false;
   };
 
   try {
@@ -315,7 +394,10 @@ async function respondTo(prompt) {
       headers: { Authorization: "Bearer " + session.token },
       signal: controller.signal,
     });
-    if (res.status === 401) return logout();
+    console.debug("[chat] server answered after", ms(), "status", res.status);
+
+    if (res.status === 401) return expireSession();
+    lastPrompt = null;
     if (!res.ok || !res.body) throw new Error("The assistant could not be reached.");
 
     const reader = res.body.getReader();
@@ -328,27 +410,19 @@ async function respondTo(prompt) {
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
-      const events = buffer.split("\n\n");
+      const events = buffer.split(/\r?\n\r?\n/);
       buffer = events.pop();
 
       for (const ev of events) {
-        const line = ev.trim();
-        if (!line.startsWith("data:")) continue;
-        const payload = line.slice(5).trim();
-
-        if (payload === "[DONE]") { finished = true; break; }
-
-        let data;
-        try { data = JSON.parse(payload); } catch (_) { continue; }
-
-        if (data.error) throw new Error(data.error);
-        if (data.token) {
-          if (!started) { bot.textContent = ""; bot.classList.add("md"); started = true; }
-          raw += data.token;
-          if (!raf) raf = requestAnimationFrame(paint);
-        }
+        if (handleEvent(ev)) { finished = true; break; }
       }
     }
+
+    // The last event may arrive without a blank line after it
+    buffer += decoder.decode();
+    if (!finished && buffer.trim()) handleEvent(buffer);
+    if (finished) { try { reader.cancel(); } catch (_) {} }
+    console.debug("[chat] finished after", ms());
 
     if (!started) {
       failed = true;
@@ -358,18 +432,26 @@ async function respondTo(prompt) {
   } catch (err) {
     if (err.name === "AbortError") {
       if (!started) { failed = true; bot.textContent = "Stopped."; }
+    } else if (started) {
+      // Keep what already arrived and say it was cut short
+      interrupted = true;
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      bot.innerHTML = renderMarkdown(raw) + '<p class="stream-note">The connection dropped, so this reply may be incomplete.</p>';
+      bot.dataset.raw = raw;
     } else {
       failed = true;
       bot.classList.add("error");
       bot.textContent = err.message || "Something went wrong. Try again.";
     }
   } finally {
+    clearTimeout(slowTimer);
     if (raf) { cancelAnimationFrame(raf); raf = 0; }
-    if (started && !failed) paint();
+    if (started && !failed && !interrupted) paint();
     controller = null;
     setBusy(false);
   }
 
+  if (started && raw) { history.push({ role: "assistant", text: raw }); saveHistory(); }
   addActions(bot, prompt, failed);
 }
 
@@ -377,10 +459,20 @@ async function send(text) {
   text = text.trim();
   if (!text || busy) return;
 
+  // Token ran out while the page was open: go to login and keep the message
+  if (session.expired) {
+    lastPrompt = text;
+    expireSession();
+    return;
+  }
+
   stopListening();
   buzz(8);
   closeMenu();
   messagesEl.querySelectorAll(".actions").forEach((el) => el.remove());
+  follow = true;
+  history.push({ role: "user", text });
+  saveHistory();
   addMessage("user", text);
 
   // Save the user's message (best effort, doesn't block the reply)
@@ -484,7 +576,31 @@ if (SR) {
 }
 
 // ---------- Start ----------
+function restoreHistory() {
+  if (!history.length) return;
+  history.forEach((m) => {
+    const el = addMessage(m.role === "user" ? "user" : "assistant");
+    if (m.role === "user") {
+      el.textContent = m.text;
+    } else {
+      el.classList.add("md");
+      el.innerHTML = renderMarkdown(m.text);
+      el.dataset.raw = m.text;
+    }
+  });
+  // Give the last answer its Copy / Retry menu again
+  const last = history[history.length - 1];
+  const prev = history[history.length - 2];
+  if (last.role === "assistant" && prev && prev.role === "user") {
+    const bots = messagesEl.querySelectorAll(".msg.assistant");
+    addActions(bots[bots.length - 1], prev.text, false);
+  }
+  follow = true;
+  scrollDown();
+}
+
 showEmpty();
+restoreHistory();
 
 // A question typed on the home page is sent straight away
 const pending = sessionStorage.getItem("pending");
