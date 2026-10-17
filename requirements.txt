@@ -6,6 +6,7 @@ argon2-cffi==25.1.0
 argon2-cffi-bindings==26.1.0
 asarPy==1.0.1
 asyncmy==0.2.16
+aiosqlite==0.12.0
 certifi==2026.7.22
 cffi==2.1.1
 charset-normalizer==3.5.2
