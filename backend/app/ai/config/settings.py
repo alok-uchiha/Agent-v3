@@ -24,7 +24,7 @@ class Setting(BaseSettings):
     app_env:Literal["development", "test", "production"] = "development"
 
     default_model : str = (
-        "openrouter:nvidia/nemotron-3.5-lightning:free"
+        "openrouter:nvidia/nemotron-3-super-120b-a12b:free"
     )
 
     openrouter_api_key:SecretStr | None = Field(

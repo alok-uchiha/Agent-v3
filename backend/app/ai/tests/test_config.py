@@ -14,3 +14,4 @@ def test_stream_emits_model_tokens():
     assert _should_emit_stream_chunk({"langgraph_node": "model"}) is True
     assert _should_emit_stream_chunk({"langgraph_node": "agent"}) is True
     assert _should_emit_stream_chunk({"langgraph_node": "tools"}) is False
+
