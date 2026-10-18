@@ -13,38 +13,21 @@ let controller = null;
 let lastPrompt = null;
 
 // If the session ends mid-request, the question is sent again after logging in
+onExpire = () => { if (lastPrompt) sessionStorage.setItem("pending", lastPrompt); };
 
-// The conversation is kept on this device, so it is still there after an
-// expired session and a fresh login. Log out or New chat clears it.
-const HIST_KEY = "chat:" + session.username;
-let history = [];
-try { history = JSON.parse(localStorage.getItem(HIST_KEY) || "[]"); } catch (_) {}
-if (!Array.isArray(history)) history = [];
+// Conversations live on the server; this is just what the page is showing
+const sideEl = $("side");
+const scrimEl = $("scrim");
+const convosEl = $("convos");
+const titleEl = $("chat-title");
+const LAST_KEY = "chat:last:" + session.username;
 
-function saveHistory() {
-  try {
-    if (history.length) localStorage.setItem(HIST_KEY, JSON.stringify(history.slice(-60)));
-    else localStorage.removeItem(HIST_KEY);
-  } catch (_) {}
-}
-
-onExpire = () => {
-  if (!lastPrompt) return;
-  sessionStorage.setItem("pending", lastPrompt);
-  // that question never got an answer; it is sent again after login
-  const last = history[history.length - 1];
-  if (last && last.role === "user" && last.text === lastPrompt) { history.pop(); saveHistory(); }
-};
+let convos = [];      // [{ id, title, updated_at }], newest first
+let activeId = null;  // null = a fresh chat, created on the first message
+let loadSeq = 0;      // so a slow load can't overwrite a newer one
 
 $("who").textContent = session.username;
 $("logout").onclick = logout;
-$("new-chat").onclick = () => {
-  if (busy) return;
-  history = [];
-  saveHistory();
-  showEmpty();
-  if (!touch) input.focus();
-};
 
 // ---------- Scrolling ----------
 // The page only auto-follows a streaming reply while you are at the bottom.
@@ -298,11 +281,9 @@ function addActions(bot, prompt, failed) {
 
   const retry = () => {
     if (busy) return;
-    const last = history[history.length - 1];
-    if (last && last.role === "assistant") { history.pop(); saveHistory(); }
     bot.remove();
     row.remove();
-    respondTo(prompt);
+    respondTo(prompt); // the server sees the same question twice and stores it once
   };
 
   if (failed || !text) {
@@ -311,7 +292,6 @@ function addActions(bot, prompt, failed) {
   } else {
     const items = [{ label: "Copy", run: async () => { await copyText(text); buzz(); toast("Copied"); } }];
     if (navigator.share) items.push({ label: "Share", run: () => { navigator.share({ text }).catch(() => {}); } });
-    items.push({ label: "Retry", run: retry });
 
     const more = document.createElement("button");
     more.type = "button";
@@ -347,6 +327,7 @@ async function respondTo(prompt) {
   let interrupted = false;
   let raw = "";
   let raf = 0;
+  let convoId = null;
   const t0 = performance.now();
   const ms = () => Math.round(performance.now() - t0) + "ms";
 
@@ -374,24 +355,32 @@ async function respondTo(prompt) {
     let data;
     try { data = JSON.parse(payload); } catch (_) { return false; }
 
-    if (data.error) throw new Error(data.error);
-    if (data.token) {
+    if (data.type === "done") return true;
+    if (data.type === "error" || data.error) throw new Error(data.message || data.error);
+    if (data.title && convoId) setConvoTitle(convoId, data.title);
+    const token = data.type === "token" ? data.content : data.token;
+    if (token) {
       if (!started) {
         started = true;
         bot.textContent = "";
         bot.classList.add("md");
         console.debug("[chat] first token after", ms());
       }
-      raw += data.token;
+      raw += token;
       if (!raf) raf = requestAnimationFrame(paint);
     }
     return false;
   };
 
   try {
-    const res = await fetch("/chat/ai/stream?input=" + encodeURIComponent(prompt), {
+    // First message of a fresh chat: create the conversation, then stream into it
+    if (!activeId) await createConversation(prompt);
+    convoId = activeId;
+
+    const res = await fetch("/chat/conversations/" + convoId + "/stream", {
       method: "POST",
-      headers: { Authorization: "Bearer " + session.token },
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.token },
+      body: JSON.stringify({ content: prompt }),
       signal: controller.signal,
     });
     console.debug("[chat] server answered after", ms(), "status", res.status);
@@ -451,7 +440,7 @@ async function respondTo(prompt) {
     setBusy(false);
   }
 
-  if (started && raw) { history.push({ role: "assistant", text: raw }); saveHistory(); }
+  if (convoId) touchConvo(convoId);
   addActions(bot, prompt, failed);
 }
 
@@ -471,16 +460,7 @@ async function send(text) {
   closeMenu();
   messagesEl.querySelectorAll(".actions").forEach((el) => el.remove());
   follow = true;
-  history.push({ role: "user", text });
-  saveHistory();
   addMessage("user", text);
-
-  // Save the user's message (best effort, doesn't block the reply)
-  request("/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content: text }),
-  }).catch(() => {});
 
   await respondTo(text);
 }
@@ -575,39 +555,314 @@ if (SR) {
   micBtn.addEventListener("click", () => (listening ? stopListening() : startListening()));
 }
 
-// ---------- Start ----------
-function restoreHistory() {
-  if (!history.length) return;
-  history.forEach((m) => {
+// ---------- Conversations ----------
+const jsonHeaders = { "Content-Type": "application/json" };
+
+function normalizeConvo(c) {
+  return {
+    id: c.id ?? c.conversation_id,
+    title: c.title || "New chat",
+    updated_at: c.updated_at || c.created_at || null,
+  };
+}
+
+// Servers often send UTC times without a "Z"; treat those as UTC
+function toDate(iso) {
+  if (!iso) return null;
+  const d = new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(iso) ? iso : iso + "Z");
+  return isNaN(d) ? null : d;
+}
+
+function bucketOf(iso) {
+  const d = toDate(iso);
+  if (!d) return "Recent";
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((day(new Date()) - day(d)) / 86400000);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 7) return "Previous 7 days";
+  if (days < 30) return "Previous 30 days";
+  return "Older";
+}
+
+function setLast(id) {
+  try {
+    if (id) localStorage.setItem(LAST_KEY, String(id));
+    else localStorage.removeItem(LAST_KEY);
+  } catch (_) {}
+  try { window.history.replaceState(null, "", id ? "#" + id : location.pathname); } catch (_) {}
+}
+
+function setTitle() {
+  const c = convos.find((x) => x.id === activeId);
+  titleEl.textContent = c ? c.title : "New chat";
+  document.title = c ? c.title + " \u00b7 Agentic AI Studio" : "Assistant \u00b7 Agentic AI Studio";
+}
+
+function openSide() {
+  sideEl.classList.add("open");
+  scrimEl.hidden = false;
+  $("menu").setAttribute("aria-expanded", "true");
+}
+function closeSide() {
+  sideEl.classList.remove("open");
+  scrimEl.hidden = true;
+  $("menu").setAttribute("aria-expanded", "false");
+}
+
+function renderConvos() {
+  convosEl.innerHTML = "";
+  if (!convos.length) {
+    const p = document.createElement("p");
+    p.className = "side-note";
+    p.textContent = "No chats yet. Your conversations will show up here.";
+    convosEl.appendChild(p);
+    return;
+  }
+
+  let group = null;
+  convos.forEach((c) => {
+    const g = bucketOf(c.updated_at);
+    if (g !== group) {
+      group = g;
+      const h = document.createElement("div");
+      h.className = "convo-group";
+      h.textContent = g;
+      convosEl.appendChild(h);
+    }
+
+    const row = document.createElement("div");
+    row.className = "convo" + (c.id === activeId ? " active" : "");
+
+    const main = document.createElement("button");
+    main.type = "button";
+    main.className = "convo-main";
+    main.textContent = c.title;
+    main.title = c.title;
+    if (c.id === activeId) main.setAttribute("aria-current", "true");
+    main.onclick = () => { if (c.id !== activeId) openConvo(c.id); else closeSide(); };
+
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "convo-more";
+    more.setAttribute("aria-label", "Options for " + c.title);
+    more.setAttribute("aria-haspopup", "menu");
+    more.innerHTML = DOTS;
+    more.onclick = (e) => {
+      e.stopPropagation();
+      openMenu(more, [
+        { label: "Rename", run: () => startRename(c, row) },
+        { label: "Delete", run: () => removeConvo(c) },
+      ]);
+    };
+
+    row.append(main, more);
+    convosEl.appendChild(row);
+  });
+}
+
+async function loadConvos() {
+  convosEl.innerHTML = '<p class="side-note">Loading...</p>';
+  try {
+    const d = await request("/chat/conversations");
+    const list = Array.isArray(d) ? d : (d && d.conversations) || [];
+    convos = list.map(normalizeConvo).filter((c) => c.id != null);
+    renderConvos();
+  } catch (err) {
+    convos = [];
+    convosEl.innerHTML = "";
+    const p = document.createElement("p");
+    p.className = "side-note";
+    p.textContent = "Couldn't load your chats.";
+    convosEl.append(p, actionBtn("Try again", loadConvos));
+  }
+}
+
+function touchConvo(id) {
+  const i = convos.findIndex((c) => c.id === id);
+  if (i < 0) return;
+  const [c] = convos.splice(i, 1);
+  c.updated_at = new Date().toISOString();
+  convos.unshift(c);
+  renderConvos();
+}
+
+function setConvoTitle(id, title) {
+  const c = convos.find((x) => x.id === id);
+  if (!c) return;
+  c.title = title;
+  renderConvos();
+  if (id === activeId) setTitle();
+}
+
+async function createConversation(firstText) {
+  const title = firstText.replace(/\s+/g, " ").trim().slice(0, 48) || "New chat";
+  const d = await request("/chat/conversations", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify({ title }),
+  });
+  const c = normalizeConvo({ title, updated_at: new Date().toISOString(), ...(d || {}) });
+  if (c.id == null) throw new Error("The server did not return a chat id.");
+  convos.unshift(c);
+  activeId = c.id;
+  setLast(c.id);
+  renderConvos();
+  setTitle();
+  return c;
+}
+
+function startNew() {
+  if (busy) { toast("Wait for the reply, or press stop."); return; }
+  loadSeq++;
+  activeId = null;
+  setLast(null);
+  showEmpty();
+  renderConvos();
+  setTitle();
+  closeSide();
+  if (!touch) input.focus();
+}
+
+async function openConvo(id) {
+  if (busy) { toast("Wait for the reply, or press stop."); return; }
+  const seq = ++loadSeq;
+  activeId = id;
+  setLast(id);
+  renderConvos();
+  setTitle();
+  closeSide();
+
+  messagesEl.innerHTML = '<p class="loading">Loading...</p>';
+  jumpBtn.hidden = true;
+
+  let data;
+  try {
+    data = await request("/chat/conversations/" + id);
+  } catch (err) {
+    if (seq !== loadSeq) return;
+    messagesEl.innerHTML = "";
+    const box = document.createElement("div");
+    box.className = "empty";
+    box.innerHTML = "<h2>Couldn't open this chat</h2>";
+    const p = document.createElement("p");
+    p.textContent = err.message || "Something went wrong.";
+    box.append(p, actionBtn("Try again", () => openConvo(id)));
+    messagesEl.appendChild(box);
+    return;
+  }
+  if (seq !== loadSeq) return;
+
+  const list = ((data && data.messages) || []).filter((m) => m.role === "user" || m.role === "assistant");
+  if (!list.length) { showEmpty(); return; }
+
+  messagesEl.innerHTML = "";
+  let lastBot = null;
+  list.forEach((m) => {
     const el = addMessage(m.role === "user" ? "user" : "assistant");
+    const text = typeof m.content === "string" ? m.content : "";
     if (m.role === "user") {
-      el.textContent = m.text;
+      el.textContent = text;
     } else {
       el.classList.add("md");
-      el.innerHTML = renderMarkdown(m.text);
-      el.dataset.raw = m.text;
+      el.innerHTML = renderMarkdown(text);
+      el.dataset.raw = text;
+      lastBot = el;
     }
   });
-  // Give the last answer its Copy / Retry menu again
-  const last = history[history.length - 1];
-  const prev = history[history.length - 2];
-  if (last.role === "assistant" && prev && prev.role === "user") {
-    const bots = messagesEl.querySelectorAll(".msg.assistant");
-    addActions(bots[bots.length - 1], prev.text, false);
-  }
+  // The newest answer gets its Copy menu back
+  const tail = list[list.length - 1];
+  if (lastBot && tail.role === "assistant") addActions(lastBot, "", false);
+
   follow = true;
   scrollDown();
+  updateJump();
+  if (!touch) input.focus();
 }
 
-showEmpty();
-restoreHistory();
+function startRename(c, row) {
+  const main = row.querySelector(".convo-main");
+  if (!main) return;
+  const inp = document.createElement("input");
+  inp.type = "text";
+  inp.className = "convo-edit";
+  inp.value = c.title;
+  inp.maxLength = 80;
+  inp.setAttribute("aria-label", "Chat name");
+  main.replaceWith(inp);
+  inp.focus();
+  inp.select();
+
+  let done = false;
+  const finish = async (save) => {
+    if (done) return;
+    done = true;
+    const t = inp.value.trim();
+    if (!save || !t || t === c.title) { renderConvos(); return; }
+    const old = c.title;
+    c.title = t;
+    renderConvos();
+    setTitle();
+    try {
+      await request("/chat/conversations/" + c.id, {
+        method: "PATCH",
+        headers: jsonHeaders,
+        body: JSON.stringify({ title: t }),
+      });
+    } catch (_) {
+      c.title = old;
+      renderConvos();
+      setTitle();
+      toast("Couldn't rename that chat");
+    }
+  };
+  inp.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); finish(true); }
+    if (e.key === "Escape") finish(false);
+  });
+  inp.addEventListener("blur", () => finish(true));
+}
+
+async function removeConvo(c) {
+  if (busy) { toast("Wait for the reply, or press stop."); return; }
+  if (!confirm("Delete this chat? This can't be undone.")) return;
+  try {
+    await request("/chat/conversations/" + c.id, { method: "DELETE" });
+  } catch (_) {
+    toast("Couldn't delete that chat");
+    return;
+  }
+  convos = convos.filter((x) => x.id !== c.id);
+  if (c.id === activeId) startNew();
+  else renderConvos();
+  buzz(10);
+}
+
+$("new-chat").onclick = startNew;
+$("new-chat-top").onclick = startNew;
+$("menu").onclick = () => (sideEl.classList.contains("open") ? closeSide() : openSide());
+$("side-close").onclick = closeSide;
+scrimEl.onclick = closeSide;
+convosEl.addEventListener("scroll", closeMenu, { passive: true });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeSide(); });
+
+// ---------- Start ----------
+async function init() {
+  showEmpty();
+  await loadConvos();
+  const wanted = [parseInt(location.hash.slice(1), 10), parseInt(localStorage.getItem(LAST_KEY), 10)];
+  const pick = wanted.find((id) => convos.some((c) => c.id === id)) ?? (convos[0] && convos[0].id);
+  if (pick != null) await openConvo(pick);
+  else { setLast(null); setTitle(); }
+}
 
 // A question typed on the home page is sent straight away
-const pending = sessionStorage.getItem("pending");
-if (pending) {
-  sessionStorage.removeItem("pending");
-  input.value = pending;
-  $("composer").requestSubmit();
-}
-
-if (!touch) input.focus();
+init().then(() => {
+  const pending = sessionStorage.getItem("pending");
+  if (pending) {
+    sessionStorage.removeItem("pending");
+    input.value = pending;
+    $("composer").requestSubmit();
+  }
+  if (!touch) input.focus();
+});

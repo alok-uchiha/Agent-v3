@@ -501,3 +501,47 @@ input, textarea { font-size: 16px; }
 .thinking { margin-left: 10px; font-size: 14px; color: var(--faint); vertical-align: middle; }
 .stream-note { margin: 8px 0 0; font-size: 13px; color: var(--faint); }
 .messages { overflow-anchor: none; }
+
+
+/* ---------- Chat layout with a conversation sidebar ---------- */
+.app { flex: 1; min-width: 0; min-height: 0; display: flex; gap: 16px; }
+.app .shell { flex: 1; width: auto; min-width: 0; max-width: 880px; margin: 0 auto; }
+
+.side { width: 292px; flex: none; display: flex; flex-direction: column; gap: 12px; overflow: hidden; padding: 16px 12px 12px; }
+.side-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 8px 0; }
+.newchat { width: 100%; gap: 8px; }
+.newchat svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
+
+.convos { flex: 1; min-height: 0; overflow-y: auto; margin: 0 -4px; padding: 0 4px; scrollbar-width: thin; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.convo-group { margin: 16px 10px 6px; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; color: var(--faint); }
+.convo-group:first-child { margin-top: 4px; }
+.convo { display: flex; align-items: center; border-radius: 14px; }
+.convo.active { background: var(--field); box-shadow: 0 0 0 1px var(--edge); }
+.convo-main { flex: 1; min-width: 0; height: 42px; padding: 0 12px; border: 0; border-radius: 14px; background: transparent; color: var(--ink); text-align: left; font-size: 15px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.convo-more { flex: none; width: 34px; height: 34px; margin-right: 4px; display: grid; place-items: center; border: 0; border-radius: 50%; background: transparent; color: var(--muted); cursor: pointer; opacity: 0; }
+.convo-more svg { width: 18px; height: 18px; fill: currentColor; }
+.convo:hover .convo-more, .convo.active .convo-more, .convo-more:focus-visible { opacity: 1; }
+@media (hover: hover) { .convo:not(.active):hover { background: rgba(128, 128, 128, 0.14); } }
+@media (hover: none) { .convo-more { opacity: 1; width: 40px; height: 40px; } }
+.convo-edit { flex: 1; min-width: 0; height: 42px; margin: 0 4px; padding: 0 12px; border-radius: 14px; border: 1px solid var(--accent); background: var(--field); color: var(--ink); outline: 0; }
+.side-note { margin: 12px 10px; font-size: 14px; line-height: 1.5; color: var(--faint); }
+
+.side-foot { display: flex; align-items: center; gap: 8px; padding: 12px 6px 2px; border-top: 1px solid var(--edge); }
+.side .who { display: block; flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.chat-title { flex: 1; min-width: 0; margin: 0; font-family: var(--font); font-size: 16px; font-weight: 600; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pill.small.icon-btn { display: none; width: 44px; height: 44px; padding: 0; border-radius: 50%; place-items: center; }
+.icon-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.messages .loading { margin: auto; color: var(--faint); }
+.scrim { display: none; }
+
+/* Phones and small tablets: the list becomes a drawer */
+@media (max-width: 860px) {
+  .pill.small.icon-btn { display: inline-grid; }
+  .side { position: fixed; z-index: 40; top: 0; bottom: 0; left: 0; width: min(86vw, 320px); border-radius: 0 28px 28px 0; padding-top: max(16px, env(safe-area-inset-top)); padding-bottom: max(12px, env(safe-area-inset-bottom)); transform: translateX(-105%); visibility: hidden; transition: transform 0.26s ease, visibility 0s linear 0.26s; }
+  .side.open { transform: none; visibility: visible; transition: transform 0.26s ease, visibility 0s; }
+  .scrim { display: block; position: fixed; inset: 0; z-index: 35; background: rgba(0, 0, 0, 0.4); }
+  .scrim[hidden] { display: none; }
+  .app .shell { max-width: none; }
+}
+@media (min-width: 861px) { .side-x { display: none !important; } }

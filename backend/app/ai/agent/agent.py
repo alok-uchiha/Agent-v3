@@ -12,12 +12,12 @@ from backend.app.ai.prompt.prompt import system_prompt
 load_dotenv()
 os.environ["OPENROUTER_API_KEY"] = os.getenv("OPENROUTER_API_KEY")
 
-# setting = get_setting()
+setting = get_setting()
 
 
 
 agent = create_agent(
-    model="openrouter:nvidia/nemotron-3-super-120b-a12b:free",
+    model=setting.default_model,
     tools=[],
     system_prompt=system_prompt,
     checkpointer=InMemorySaver()
