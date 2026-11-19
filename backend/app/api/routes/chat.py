@@ -1,20 +1,18 @@
 import json
 import logging
-import time
 from typing import Annotated
 
 import anyio
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from langchain.messages import HumanMessage
 
 from backend.app.core.dependency import get_db, get_user
 from backend.app.db.models import Conversation, Message, User
 from backend.app.schemas.message import ChatRequest, ConversationCreate, ConversationRename
-from backend.app.ai.agent.agent import agent
 from backend.app.db.database import AsyncSessionLocal
+from backend.app.ai.streaming import stream_events
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -24,23 +22,6 @@ MAX_TITLE_CHARS = 80
 
 
 # ---------- small helpers ----------
-def _text(content) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "".join(
-            p if isinstance(p, str) else p.get("text", "") for p in content
-        )
-    if isinstance(content, dict):
-        return content.get("text", "")
-    return ""
-
-
-def _should_emit_stream_chunk(meta: dict | None) -> bool:
-    node = (meta or {}).get("langgraph_node")
-    return node in {"agent", "model"} or node is None
-
-
 def _sse(payload: dict) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
@@ -210,6 +191,7 @@ async def delete_conversation(
 # ---------- the assistant ----------
 @router.post("/conversations/{conversation_id}/stream")
 async def stream_reply(
+    request : Request,
     conversation_id: int,
     body: ChatRequest,
     current_user: Annotated[User, Depends(get_user)],
@@ -229,6 +211,7 @@ async def stream_reply(
     user_id = current_user.id
     convo = await get_owned_conversation(db, conversation_id, user_id)
     thread_id = str(convo.id)
+    agent = request.app.state.agent
 
     # "Retry" after a failed reply sends the same text again. If the newest message
     # is already this question (and nothing answered it), don't store it twice.
@@ -249,40 +232,19 @@ async def stream_reply(
     async def event_gen():
         parts: list[str] = []
         assistant_id = None
-        t0 = time.perf_counter()
-        seen_chunk = seen_token = False
 
         # First bytes out right away, so proxies start passing the stream along
         yield ": stream open\n\n"
 
         try:
-            async for chunk, meta in agent.astream(
-                {"messages": [HumanMessage(prompt)]},
-                config=config,
-                stream_mode="messages",
-            ):
-                if not seen_chunk:
-                    seen_chunk = True
-                    print(f"[timing] chat {conversation_id}: first chunk after "
-                          f"{time.perf_counter() - t0:.2f}s (node={(meta or {}).get('langgraph_node')})", flush=True)
-                if not _should_emit_stream_chunk(meta):
-                    continue
-                token = _text(chunk.content)
-                if not token:
-                    continue
-                if not seen_token:
-                    seen_token = True
-                    print(f"[timing] chat {conversation_id}: first text after "
-                          f"{time.perf_counter() - t0:.2f}s", flush=True)
-                parts.append(token)
-                yield _sse({"type": "token", "content": token})
+            async for event in stream_events(agent, prompt, config):
+                if event.type == "token":
+                    parts.append(event.content)
+                yield _sse(event.model_dump())
         except Exception:
             logger.exception("agent stream failed (conversation %s)", conversation_id)
             yield _sse({"type": "error", "message": "The agent hit an error. Try again."})
         finally:
-            # Runs after a normal finish, after an error, AND when the user presses
-            # Stop (the client disconnects and this task is cancelled). The shield
-            # lets the save go through even though the task is being cancelled.
             reply = "".join(parts)
             if reply:
                 with anyio.CancelScope(shield=True):

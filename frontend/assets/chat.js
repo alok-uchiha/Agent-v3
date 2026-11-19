@@ -209,10 +209,99 @@ function addMessage(role, text = "") {
   scrollDown();
   return el;
 }
+// Assistant replies get a small "trace" on top (thinking + tool calls)
+// and a .body that the answer streams into.
+function addAssistantMessage() {
+  const empty = $("empty");
+  if (empty) empty.remove();
 
-function showDots(el, slow = false) {
-  el.innerHTML = '<span class="dots" aria-label="Assistant is typing"><i></i><i></i><i></i></span>' +
-    (slow ? '<span class="thinking">Still thinking...</span>' : "");
+  const el = document.createElement("div");
+  el.className = "msg assistant";
+
+  const trace = document.createElement("div");
+  trace.className = "trace";
+  trace.hidden = true;
+
+  const body = document.createElement("div");
+  body.className = "body";
+
+  el.append(trace, body);
+  messagesEl.appendChild(el);
+  scrollDown();
+  return { el, trace, body };
+}
+
+const bodyOf = (el) => el.querySelector(".body") || el;
+
+// Friendly names for the tools your agent has
+const TOOL_LABELS = {
+  web_search: "Searching the web",
+  search: "Searching the web",
+  tavily_search: "Searching the web",
+  google_search: "Searching the web",
+  browse: "Opening a page",
+  fetch_url: "Reading a page",
+  scrape: "Reading a page",
+  python: "Running code",
+  python_repl: "Running code",
+  calculator: "Calculating",
+  file_search: "Searching files",
+  retrieve: "Searching documents",
+};
+
+function toolLabel(name) {
+  const n = String(name || "tool");
+  return TOOL_LABELS[n] || "Using " + n.replace(/[_-]+/g, " ");
+}
+
+function toolHint(args) {
+  if (!args || typeof args !== "object") return "";
+  for (const k of ["query", "q", "search_query", "url", "input", "expression", "prompt", "code"]) {
+    const v = args[k];
+    if (typeof v === "string" && v.trim()) {
+      const t = v.replace(/\s+/g, " ").trim();
+      return t.length > 80 ? t.slice(0, 79) + "…" : t;
+    }
+  }
+  return "";
+}
+
+function traceRow(kind, label, hint) {
+  const row = document.createElement("div");
+  row.className = "trace-row live " + kind;
+
+  const ic = document.createElement("span");
+  ic.className = "trace-ic";
+  ic.setAttribute("aria-hidden", "true");
+
+  const wrap = document.createElement("div");
+  wrap.className = "trace-text";
+
+  const lab = document.createElement("span");
+  lab.className = "trace-label";
+  lab.textContent = label;
+  wrap.appendChild(lab);
+
+  if (hint) {
+    const h = document.createElement("span");
+    h.className = "trace-hint";
+    h.textContent = hint;
+    wrap.appendChild(h);
+  }
+
+  row.append(ic, wrap);
+  return row;
+}
+
+function markDone(row, ok = true) {
+  if (!row || !row.classList.contains("live")) return;
+  row.classList.remove("live");
+  row.classList.add("done");
+  if (!ok) row.classList.add("failed");
+}
+
+function showDots(el) {
+  el.innerHTML = '<span class="dots" aria-label="Assistant is typing"><i></i><i></i><i></i></span>';
 }
 
 async function copyText(t) {
@@ -277,7 +366,7 @@ const DOTS = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12"
 function addActions(bot, prompt, failed) {
   const row = document.createElement("div");
   row.className = "actions";
-  const text = (bot.dataset.raw || bot.textContent).trim();
+  const text = (bot.dataset.raw || bodyOf(bot).textContent).trim();
 
   const retry = () => {
     if (busy) return;
@@ -318,8 +407,9 @@ function setBusy(b) {
 async function respondTo(prompt) {
   setBusy(true);
   follow = true;
-  const bot = addMessage("assistant");
-  showDots(bot);
+
+  const { el: bot, trace, body } = addAssistantMessage();
+  showDots(body);                 // three dots until something visible happens
   controller = new AbortController();
 
   let started = false;
@@ -328,16 +418,37 @@ async function respondTo(prompt) {
   let raw = "";
   let raf = 0;
   let convoId = null;
+  let traceShown = false;
+  let thinkingRow = null;
+  const toolRows = new Map();
+
   const t0 = performance.now();
   const ms = () => Math.round(performance.now() - t0) + "ms";
 
-  // If the session runs out, keep the question so it is sent after logging in again
   lastPrompt = prompt;
-  const slowTimer = setTimeout(() => { if (!started) showDots(bot, true); }, 2500);
+
+  const showTrace = () => {
+    if (traceShown) return;
+    traceShown = true;
+    trace.hidden = false;
+    body.innerHTML = "";          // drop the dots
+  };
+
+  const addThinking = () => {
+    if (thinkingRow && thinkingRow.classList.contains("live")) return;
+    showTrace();
+    thinkingRow = traceRow("thinking", "Thinking");
+    trace.appendChild(thinkingRow);
+    if (follow) scrollDown(); else updateJump();
+  };
+
+  const finishLive = () => {
+    trace.querySelectorAll(".trace-row.live").forEach((r) => markDone(r));
+  };
 
   const paint = () => {
     raf = 0;
-    bot.innerHTML = renderMarkdown(raw);
+    body.innerHTML = renderMarkdown(raw);
     bot.dataset.raw = raw;
     if (follow) scrollDown(); else updateJump();
   };
@@ -355,14 +466,42 @@ async function respondTo(prompt) {
     let data;
     try { data = JSON.parse(payload); } catch (_) { return false; }
 
+    // ---- agent activity ----
+    if (data.type === "thinking") {
+      addThinking();
+      return false;
+    }
+    if (data.type === "tool_start") {
+      showTrace();
+      if (thinkingRow) markDone(thinkingRow);
+      const row = traceRow("tool", toolLabel(data.name), toolHint(data.args));
+      if (data.id) toolRows.set(data.id, row);
+      trace.appendChild(row);
+      if (follow) scrollDown(); else updateJump();
+      return false;
+    }
+    if (data.type === "tool_end") {
+      const row = (data.id && toolRows.get(data.id)) ||
+        trace.querySelector(".trace-row.tool.live");
+      if (row) {
+        markDone(row, data.ok !== false);
+        if (data.ok === false) row.classList.add("failed");
+      }
+      return false;
+    }
+
+    // ---- answer ----
     if (data.type === "done") return true;
     if (data.type === "error" || data.error) throw new Error(data.message || data.error);
     if (data.title && convoId) setConvoTitle(convoId, data.title);
+
     const token = data.type === "token" ? data.content : data.token;
     if (token) {
       if (!started) {
         started = true;
-        bot.textContent = "";
+        finishLive();
+        body.innerHTML = "";
+        body.classList.add("md");
         bot.classList.add("md");
         console.debug("[chat] first token after", ms());
       }
@@ -373,7 +512,6 @@ async function respondTo(prompt) {
   };
 
   try {
-    // First message of a fresh chat: create the conversation, then stream into it
     if (!activeId) await createConversation(prompt);
     convoId = activeId;
 
@@ -407,7 +545,6 @@ async function respondTo(prompt) {
       }
     }
 
-    // The last event may arrive without a blank line after it
     buffer += decoder.decode();
     if (!finished && buffer.trim()) handleEvent(buffer);
     if (finished) { try { reader.cancel(); } catch (_) {} }
@@ -415,27 +552,27 @@ async function respondTo(prompt) {
 
     if (!started) {
       failed = true;
-      bot.classList.add("error");
-      bot.textContent = "No reply came back. Try again.";
+      body.classList.add("error");
+      body.textContent = "No reply came back. Try again.";
     }
   } catch (err) {
     if (err.name === "AbortError") {
-      if (!started) { failed = true; bot.textContent = "Stopped."; }
+      if (!started) { failed = true; body.textContent = "Stopped."; }
     } else if (started) {
-      // Keep what already arrived and say it was cut short
       interrupted = true;
       if (raf) { cancelAnimationFrame(raf); raf = 0; }
-      bot.innerHTML = renderMarkdown(raw) + '<p class="stream-note">The connection dropped, so this reply may be incomplete.</p>';
+      body.innerHTML = renderMarkdown(raw) +
+        '<p class="stream-note">The connection dropped, so this reply may be incomplete.</p>';
       bot.dataset.raw = raw;
     } else {
       failed = true;
-      bot.classList.add("error");
-      bot.textContent = err.message || "Something went wrong. Try again.";
+      body.classList.add("error");
+      body.textContent = err.message || "Something went wrong. Try again.";
     }
   } finally {
-    clearTimeout(slowTimer);
     if (raf) { cancelAnimationFrame(raf); raf = 0; }
     if (started && !failed && !interrupted) paint();
+    finishLive();
     controller = null;
     setBusy(false);
   }
@@ -759,17 +896,20 @@ async function openConvo(id) {
   messagesEl.innerHTML = "";
   let lastBot = null;
   list.forEach((m) => {
-    const el = addMessage(m.role === "user" ? "user" : "assistant");
     const text = typeof m.content === "string" ? m.content : "";
     if (m.role === "user") {
-      el.textContent = text;
+      addMessage("user", text);
     } else {
+      // same structure as live replies: msg.assistant > .trace + .body
+      const { el, body } = addAssistantMessage();
       el.classList.add("md");
-      el.innerHTML = renderMarkdown(text);
+      body.classList.add("md");
+      body.innerHTML = renderMarkdown(text);
       el.dataset.raw = text;
       lastBot = el;
     }
   });
+
   // The newest answer gets its Copy menu back
   const tail = list[list.length - 1];
   if (lastBot && tail.role === "assistant") addActions(lastBot, "", false);

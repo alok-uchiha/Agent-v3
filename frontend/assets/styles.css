@@ -498,7 +498,6 @@ input, textarea { font-size: 16px; }
 /* ---------- Session notice, stream state, scrolling ---------- */
 .notice { margin: 0 0 18px; padding: 12px 16px; border-radius: 14px; font-size: 14px; line-height: 1.5; color: var(--ink); background: var(--panel); border: 1px solid var(--edge); }
 .error a { color: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
-.thinking { margin-left: 10px; font-size: 14px; color: var(--faint); vertical-align: middle; }
 .stream-note { margin: 8px 0 0; font-size: 13px; color: var(--faint); }
 .messages { overflow-anchor: none; }
 
@@ -545,3 +544,88 @@ input, textarea { font-size: 16px; }
   .app .shell { max-width: none; }
 }
 @media (min-width: 861px) { .side-x { display: none !important; } }
+/* ---------- Assistant activity trace (thinking + tool calls) ---------- */
+
+.msg.assistant .trace {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.35;
+  white-space: normal;
+  color: color-mix(in srgb, currentColor 62%, transparent);
+}
+.msg.assistant .trace[hidden] { display: none; }
+
+.msg.assistant .trace-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  animation: trace-in .18s ease-out both;
+}
+@keyframes trace-in {
+  from { opacity: 0; transform: translateY(-2px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.msg.assistant .trace-ic {
+  position: relative;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+
+.msg.assistant .trace-row.live .trace-ic {
+  border: 1.7px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-top-color: currentColor;
+  animation: trace-spin .7s linear infinite;
+}
+@keyframes trace-spin { to { transform: rotate(360deg); } }
+
+.msg.assistant .trace-row.done .trace-ic::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  background: currentColor;
+  opacity: .55;
+  -webkit-mask-image: var(--trace-check);
+          mask-image: var(--trace-check);
+  -webkit-mask-position: center; mask-position: center;
+  -webkit-mask-size: contain;    mask-size: contain;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+}
+
+.msg.assistant .trace-row.failed .trace-ic::before {
+  opacity: 1;
+  background: #e5484d;
+  -webkit-mask-image: var(--trace-cross);
+          mask-image: var(--trace-cross);
+}
+
+.msg.assistant .trace-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.msg.assistant .trace-row.done .trace-label { opacity: .72; }
+
+.msg.assistant .trace-hint {
+  font-size: .84em;
+  opacity: .68;
+  max-width: 46ch;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.msg.assistant .body.error { color: #d94a4a; }
+
+:root {
+  --trace-check: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 13l4 4L19 7'/%3E%3C/svg%3E");
+  --trace-cross: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3.4' stroke-linecap='round'%3E%3Cpath d='M6 6l12 12M18 6L6 18'/%3E%3C/svg%3E");
+}

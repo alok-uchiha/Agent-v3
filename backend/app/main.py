@@ -7,6 +7,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from contextlib import asynccontextmanager
+
+from backend.app.core.logging_config import setup_loging
+from backend.app.ai.agent.factory import build_agent
+from backend.app.ai.agent.register import AGENTS
+from backend.app.ai.memory.checkpointer import open_checkpointer
+from backend.app.core.config import DATABASE_URI
+
+setup_loging()
+
 ROOT = Path(__file__).resolve().parents[2]          # AGENT-V3/
 BACKEND = ROOT / "backend"
 if str(BACKEND) not in sys.path:
@@ -18,7 +28,15 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = BASE_DIR / "frontend"
 ASSETS_DIR = FRONTEND_DIR / "assets"
 
-app = FastAPI(title="Agentic AI Studio")
+
+@asynccontextmanager
+async def lifespan(app:FastAPI):
+    async with open_checkpointer(DATABASE_URI) as checkpointer:
+        app.state.agent = build_agent(AGENTS["researcher"], checkpointer)
+        yield
+
+
+app = FastAPI(title="Agentic AI Studio", lifespan=lifespan)
 
 cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173").split(",")
 app.add_middleware(
