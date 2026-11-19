@@ -25,6 +25,7 @@ dependencies = [
     "langchain-openai>=0.2.0",
     "openrouter>=0.11.46",
     "tavily",
+    "langgraph-checkpoint-mysql",
 ]
 
 [tool.setuptools]
