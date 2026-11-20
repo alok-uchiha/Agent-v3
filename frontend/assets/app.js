@@ -77,7 +77,7 @@ function currentTheme() {
 document.documentElement.dataset.theme = currentTheme();
 
 // Colour of the phone's browser bar follows the theme
-const BAR_COLORS = { mist: "#e2e3e2", midnight: "#0b0d0f" };
+const BAR_COLORS = { mist: "#e2e3e2", midnight: "#050505" };
 function applyBarColor() {
   let m = document.querySelector('meta[name="theme-color"]');
   if (!m) { m = document.createElement("meta"); m.name = "theme-color"; document.head.appendChild(m); }
@@ -107,6 +107,53 @@ function toast(text) {
   toastTimer = setTimeout(() => el.classList.remove("show"), 1800);
 }
 
+// Theme change animation: the new theme sweeps in from the toggle button with a soft,
+// slightly wavy edge, all the way to the top or bottom of the screen (whichever is
+// farther from the button). Falls back to an instant switch.
+const THEME_ANIM_MS = 2000;
+
+function spreadTheme(origin, apply) {
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (!document.startViewTransition || reduce) { apply(); return; }
+
+  const r = origin.getBoundingClientRect();
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  const w = window.innerWidth, h = window.innerHeight;
+
+  const down = cy < h / 2;            // button in the top half -> sweep down, else sweep up
+  const AMP = 14, LEAD = 70;          // wave size and the gentle bulge that leaves from the button
+  const dist = (down ? h - cy : cy) + AMP + LEAD;
+  const sign = down ? 1 : -1;
+  const near = down ? -2 : h + 2;     // the screen edge the sweep starts from
+  const ph = Math.random() * Math.PI * 2;
+
+  const COLS = 40, FRAMES = 90;
+  const frames = [];
+  for (let f = 0; f <= FRAMES; f++) {
+    const t = f / FRAMES;
+    const e = 0.5 - Math.cos(Math.PI * t) / 2;   // slow in, slow out
+    const live = Math.sin(Math.PI * t);          // wave only shows mid-way, flat at start and end
+    const pts = ["-2px " + near + "px"];
+    for (let i = 0; i <= COLS; i++) {
+      const x = -2 + ((w + 4) * i) / COLS;
+      const wave = AMP * live * (Math.sin(x / 90 + ph + t * 4) * 0.6 + Math.sin(x / 41 - ph - t * 3) * 0.4);
+      const bump = LEAD * live * Math.exp(-Math.pow((x - cx) / (w * 0.28 + 60), 2));
+      pts.push(x.toFixed(1) + "px " + (cy + sign * (dist * e + bump) + wave).toFixed(1) + "px");
+    }
+    pts.push((w + 2) + "px " + near + "px");
+    frames.push({ clipPath: "polygon(" + pts.join(",") + ")" });
+  }
+
+  const vt = document.startViewTransition(apply);
+  vt.ready.then(() => {
+    document.documentElement.animate(frames, {
+      duration: THEME_ANIM_MS,
+      easing: "linear",
+      pseudoElement: "::view-transition-new(root)",
+    });
+  }).catch(() => {});
+}
+
 const SUN = '<svg class="ic ic-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
 const MOON = '<svg class="ic ic-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg>';
 
@@ -122,11 +169,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
     btn.addEventListener("click", () => {
       const next = document.documentElement.dataset.theme === "midnight" ? "mist" : "midnight";
-      document.documentElement.dataset.theme = next;
-      localStorage.setItem(THEME_KEY, next);
-      applyBarColor();
+      const apply = () => {
+        document.documentElement.dataset.theme = next;
+        localStorage.setItem(THEME_KEY, next);
+        applyBarColor();
+        sync();
+      };
       buzz(12);
-      sync();
+      spreadTheme(btn, apply);
     });
   });
 });

@@ -209,8 +209,38 @@ function addMessage(role, text = "") {
   scrollDown();
   return el;
 }
-// Assistant replies get a small "trace" on top (thinking + tool calls)
+// Assistant replies have a "work" area on top (mascot + live status + steps)
 // and a .body that the answer streams into.
+// ---------- Mascot ----------
+// The image files live in the frontend "assets" folder.
+const MASCOT = {
+  thinking: "/assets/mascot.webp",          // animated: while the agent thinks
+  working: "/assets/mascot-working.webp",   // faster: while a tool runs
+  done: "/assets/mascot-done.webp",         // a still frame once the answer starts
+};
+
+function setMascot(el, state) {
+  el.className = "mascot " + state;
+  const img = el.querySelector(".m-img");
+  const src = MASCOT[state] || MASCOT.thinking;
+  if (img && img.getAttribute("src") !== src) img.setAttribute("src", src);
+}
+
+function mascotHtml() {
+  return '<span class="mascot thinking" aria-hidden="true">' +
+    '<img class="m-img" alt="" src="' + MASCOT.thinking + '"></span>';
+}
+
+function setWorkLabel(label, text) {
+  if (!text) {
+    label.className = "work-label";
+    label.innerHTML = '<span class="dots" aria-label="Assistant is working"><i></i><i></i><i></i></span>';
+    return;
+  }
+  label.className = "work-label live";
+  label.textContent = text;
+}
+
 function addAssistantMessage() {
   const empty = $("empty");
   if (empty) empty.remove();
@@ -218,17 +248,33 @@ function addAssistantMessage() {
   const el = document.createElement("div");
   el.className = "msg assistant";
 
+  const work = document.createElement("div");
+  work.className = "work";
+  work.hidden = true;
+
+  const head = document.createElement("button");
+  head.type = "button";
+  head.className = "work-head";
+  head.disabled = true; // becomes a "show steps" toggle once the answer starts
+  head.setAttribute("aria-expanded", "false");
+  head.innerHTML = mascotHtml() + '<span class="work-label"></span><span class="work-chev" aria-hidden="true"></span>';
+
   const trace = document.createElement("div");
   trace.className = "trace";
-  trace.hidden = true;
+
+  work.append(head, trace);
+  head.onclick = () => {
+    const open = work.classList.toggle("open");
+    head.setAttribute("aria-expanded", String(open));
+  };
 
   const body = document.createElement("div");
   body.className = "body";
 
-  el.append(trace, body);
+  el.append(work, body);
   messagesEl.appendChild(el);
   scrollDown();
-  return { el, trace, body };
+  return { el, work, head, trace, body };
 }
 
 const bodyOf = (el) => el.querySelector(".body") || el;
@@ -408,8 +454,11 @@ async function respondTo(prompt) {
   setBusy(true);
   follow = true;
 
-  const { el: bot, trace, body } = addAssistantMessage();
-  showDots(body);                 // three dots until something visible happens
+  const { el: bot, work, head, trace, body } = addAssistantMessage();
+  const label = head.querySelector(".work-label");
+  const mascot = head.querySelector(".mascot");
+  work.hidden = false;
+  setWorkLabel(label, "");        // jumping dots until the first event arrives
   controller = new AbortController();
 
   let started = false;
@@ -418,8 +467,9 @@ async function respondTo(prompt) {
   let raw = "";
   let raf = 0;
   let convoId = null;
-  let traceShown = false;
-  let thinkingRow = null;
+  let settled = false;
+  let sawActivity = false;
+  let toolCount = 0;
   const toolRows = new Map();
 
   const t0 = performance.now();
@@ -427,23 +477,21 @@ async function respondTo(prompt) {
 
   lastPrompt = prompt;
 
-  const showTrace = () => {
-    if (traceShown) return;
-    traceShown = true;
-    trace.hidden = false;
-    body.innerHTML = "";          // drop the dots
-  };
-
-  const addThinking = () => {
-    if (thinkingRow && thinkingRow.classList.contains("live")) return;
-    showTrace();
-    thinkingRow = traceRow("thinking", "Thinking");
-    trace.appendChild(thinkingRow);
-    if (follow) scrollDown(); else updateJump();
-  };
-
-  const finishLive = () => {
+  // The answer started (or the run ended): stop the animation and fold the steps away
+  const settle = () => {
+    if (settled) return;
+    settled = true;
     trace.querySelectorAll(".trace-row.live").forEach((r) => markDone(r));
+    if (!sawActivity) { work.hidden = true; return; }
+    const secs = Math.max(1, Math.round((performance.now() - t0) / 1000));
+    setMascot(mascot, "done");
+    label.className = "work-label";
+    label.textContent = toolCount
+      ? "Worked for " + secs + "s \u00b7 " + toolCount + (toolCount === 1 ? " step" : " steps")
+      : "Thought for " + secs + "s";
+    head.disabled = false;
+    work.classList.add("settled");
+    if (follow) scrollDown(); else updateJump();
   };
 
   const paint = () => {
@@ -468,12 +516,16 @@ async function respondTo(prompt) {
 
     // ---- agent activity ----
     if (data.type === "thinking") {
-      addThinking();
+      sawActivity = true;
+      setMascot(mascot, "thinking");
+      setWorkLabel(label, "Thinking\u2026");
       return false;
     }
     if (data.type === "tool_start") {
-      showTrace();
-      if (thinkingRow) markDone(thinkingRow);
+      sawActivity = true;
+      toolCount++;
+      setMascot(mascot, "working");
+      setWorkLabel(label, toolLabel(data.name) + "\u2026");
       const row = traceRow("tool", toolLabel(data.name), toolHint(data.args));
       if (data.id) toolRows.set(data.id, row);
       trace.appendChild(row);
@@ -483,10 +535,9 @@ async function respondTo(prompt) {
     if (data.type === "tool_end") {
       const row = (data.id && toolRows.get(data.id)) ||
         trace.querySelector(".trace-row.tool.live");
-      if (row) {
-        markDone(row, data.ok !== false);
-        if (data.ok === false) row.classList.add("failed");
-      }
+      if (row) markDone(row, data.ok !== false);
+      setMascot(mascot, "thinking");
+      setWorkLabel(label, data.ok === false ? "That didn\u2019t work, trying again\u2026" : "Reading the results\u2026");
       return false;
     }
 
@@ -499,7 +550,7 @@ async function respondTo(prompt) {
     if (token) {
       if (!started) {
         started = true;
-        finishLive();
+        settle();
         body.innerHTML = "";
         body.classList.add("md");
         bot.classList.add("md");
@@ -572,7 +623,7 @@ async function respondTo(prompt) {
   } finally {
     if (raf) { cancelAnimationFrame(raf); raf = 0; }
     if (started && !failed && !interrupted) paint();
-    finishLive();
+    if (started) settle(); else work.hidden = true;
     controller = null;
     setBusy(false);
   }
